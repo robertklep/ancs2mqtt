@@ -2,12 +2,12 @@
 #include <Arduino.h>
 #include <MQTT.h>
 #include <EEPROM.h>
+#include <string>
+#include <functional>
 #include "defaults.h"
 #include <ArduinoJson.h>
 #include <IotWebConf.h>
 #include <IotWebConfUsing.h> // This loads aliases for easier class names.
-#include <string>
-#include <functional>
 #include "esp32notifications.h"
 
 DNSServer   dnsServer;
@@ -15,9 +15,13 @@ WebServer   httpServer(80);
 WiFiClient  wifiClient;
 MQTTClient  mqttClient(MQTT_BUFFER_SIZE);
 
+using CallbackFn = std::function<void()>;
+
 class NetworkManager {
-  bool    needReset       = false;
-  bool    needMqttConnect = false;
+  bool needReset       = false;
+  bool needMqttConnect = false;
+
+  CallbackFn onStartedCallback;
 
   const char*  name;
   String       topicPrefix = "ancs2mqtt";
@@ -68,7 +72,9 @@ class NetworkManager {
       topicPrefix = prefix;
     }
 
-    void start() {
+    void start(CallbackFn onStarted = nullptr) {
+      onStartedCallback = onStarted;
+
       // Add parameters to group, and group to config.
       mqttGroup.addItem(&iosDeviceIdentifierParam);
       mqttGroup.addItem(&mqttHostParam);
@@ -103,7 +109,7 @@ class NetworkManager {
         */
       } else {
         if (String(resetConfigValue).equals("selected")) {
-          Serial.println("Clearing EEPROM and starting over.");
+          Serial.println("ancs2mqtt: clearing EEPROM and starting over.");
           clearEEPROM();
           return;
         }
@@ -153,35 +159,42 @@ class NetworkManager {
           needMqttConnect = false;
         }
       } else if (iotWebConf->getState() == iotwebconf::OnLine && ! mqttClient.connected()) {
-        Serial.println("MQTT reconnect");
+        Serial.println("ancs2mqtt: MQTT reconnect");
         needMqttConnect = true;
         //connectMqtt();
       }
 
       if (needReset) {
-        Serial.println("Rebooting after 1 second.");
+        Serial.println("ancs2mqtt: rebooting after 1 second.");
         iotWebConf->delay(1000);
         ESP.restart();
       }
     }
 
     bool connectMqtt() {
-      static unsigned lastMqttConnectionAttempt = 0;
-      unsigned long   now = millis();
+      static bool     firstTime   = true;
+      static unsigned lastAttempt = 0;
+      unsigned long   now         = millis();
 
       // Only try once per second.
-      if (now - lastMqttConnectionAttempt < 1000) {
+      if (now - lastAttempt < 1000) {
         return false;
       }
-      Serial.printf("Connecting to MQTT server %s:%s ", mqttHostValue, mqttPortValue);
+      Serial.printf("ancs2mqtt: connecting to MQTT server %s:%s ", mqttHostValue, mqttPortValue);
       if (! connectMqttOptions()) {
         Serial.println("...failed!");
-        lastMqttConnectionAttempt = now;
+        lastAttempt = now;
         return false;
       }
       Serial.println("...connected!");
-
       announce();
+
+      if (firstTime) {
+        firstTime = false;
+        if (onStartedCallback != nullptr) {
+          onStartedCallback();
+        }
+      }
 
       return true;
     }
@@ -242,12 +255,12 @@ void NetworkManager::wifiConnected() {
 }
 
 void NetworkManager::configSaved() {
-  Serial.println("Configuration was updated.");
+  Serial.println("ancs2mqtt: configuration was updated.");
   needReset = true;
 }
 
 bool NetworkManager::formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper) {
-  Serial.println("Validating form.");
+  Serial.println("ancs2mqtt: validating form.");
   String host  = webRequestWrapper->arg(mqttHostParam.getId());
   String port  = webRequestWrapper->arg(mqttPortParam.getId());
   String ident = webRequestWrapper->arg(iosDeviceIdentifierParam.getId());

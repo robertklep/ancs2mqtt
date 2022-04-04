@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp32notifications.h>
+#include <functional>
 #include "defaults.h"
 #include "utils.h"
 #include "NetworkManager.h"
@@ -13,11 +14,11 @@ BLENotifications notifications;
 void onBLEStateChanged(BLENotifications::State state) {
   switch(state) {
     case BLENotifications::StateConnected:
-      Serial.println("StateConnected - connected to a phone or tablet");
+      Serial.println("ancs2mqtt: stateConnected - connected to a phone or tablet");
       break;
 
     case BLENotifications::StateDisconnected:
-      Serial.println("StateDisconnected - disconnected from a phone or tablet");
+      Serial.println("ancs2mqtt: stateDisconnected - disconnected from a phone or tablet");
       notifications.startAdvertising();
       break;
   }
@@ -33,7 +34,7 @@ void onNotificationArrived(const ArduinoNotification* notification, const Notifi
   String payload;
   serializeJson(doc, payload);
 
-  Serial.print("Got notification: ");
+  Serial.print("ancs2mqtt: received notification ");
   Serial.println(payload);
 
   nwManager.publish(notification->type, payload);
@@ -41,7 +42,7 @@ void onNotificationArrived(const ArduinoNotification* notification, const Notifi
 
 // A notification was cleared
 void onNotificationRemoved(const ArduinoNotification* notification, const Notification* rawNotificationData) {
-  Serial.print("Removed notification: ");
+  Serial.print("ancs2mqtt: removed notification ");
   Serial.println(notification->title);
   Serial.println(notification->message);
   Serial.println(notification->type);
@@ -49,18 +50,17 @@ void onNotificationRemoved(const ArduinoNotification* notification, const Notifi
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("ancs2mqtt starting up...");
+  Serial.println("ancs2mqtt: starting up...");
 
   // Start network manager.
-  nwManager.start();
-
-  // Set up the BLENotification library.
-  /*
-  notifications.begin(nwManager.getName());
-  notifications.setConnectionStateChangedCallback(onBLEStateChanged);
-  notifications.setNotificationCallback(onNotificationArrived);
-  notifications.setRemovedCallback(onNotificationRemoved);
-  */
+  nwManager.start([]() -> void {
+    Serial.println("ancs2mqtt: initializing BLE");
+    // Set up the BLENotification library once the network manager has started.
+    notifications.begin(nwManager.getName());
+    notifications.setConnectionStateChangedCallback(onBLEStateChanged);
+    notifications.setNotificationCallback(onNotificationArrived);
+    notifications.setRemovedCallback(onNotificationRemoved);
+  });
 }
 
 void loop() {

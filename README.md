@@ -17,6 +17,8 @@ The connection between your iDevice and the ESP32 is maintained over BLE, which 
 
 ## HOWTO
 
+Heads up: this isn't a plug-and-play project. You should be comfortable working with (Linux/macOS) command lines. At some point I will try and provide prebaked firmware files, but you'd still need to know a bit about flashing ESP32 firmware.
+
 ### Building and uploading the firmware
 
 I don't use the PlatformIO IDE so the following steps use the PlatformIO CLI tool (`platformio/pio`).
