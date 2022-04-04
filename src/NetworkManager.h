@@ -126,28 +126,36 @@ class NetworkManager {
       mqttClient.begin(wifiClient);
     }
 
-    String constructTopic(const char* topic) {
-      return constructTopic(String(topic));
+    String bridgeTopic(const char* topic) {
+      return bridgeTopic(String(topic));
     }
 
-    String constructTopic(const String topic) {
+    String bridgeTopic(const String topic) {
+      return topicPrefix + String("/bridge/") + topic;
+    }
+
+    String deviceTopic(const char* topic) {
+      return deviceTopic(String(topic));
+    }
+
+    String deviceTopic(const String topic) {
       return topicPrefix + String("/") + String(iosDeviceIdentifierValue) + String("/") + topic;
     }
 
     bool publish(const char* topic, const char* payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
+      return mqttClient.publish(deviceTopic(topic), payload, retained, qos);
     }
 
     bool publish(const String topic, const char* payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
+      return mqttClient.publish(deviceTopic(topic), payload, retained, qos);
     }
 
     bool publish(const char* topic, const String payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
+      return mqttClient.publish(deviceTopic(topic), payload, retained, qos);
     }
 
     bool publish(const String topic, const String payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
+      return mqttClient.publish(deviceTopic(topic), payload, retained, qos);
     }
 
     void loop() {
@@ -155,13 +163,12 @@ class NetworkManager {
       mqttClient.loop();
 
       if (needMqttConnect) {
-        if (connectMqtt()) {
+        if (mqttConnect()) {
           needMqttConnect = false;
         }
       } else if (iotWebConf->getState() == iotwebconf::OnLine && ! mqttClient.connected()) {
         Serial.println("ancs2mqtt: MQTT reconnect");
         needMqttConnect = true;
-        //connectMqtt();
       }
 
       if (needReset) {
@@ -171,7 +178,7 @@ class NetworkManager {
       }
     }
 
-    bool connectMqtt() {
+    bool mqttConnect() {
       static bool     firstTime   = true;
       static unsigned lastAttempt = 0;
       unsigned long   now         = millis();
@@ -181,14 +188,17 @@ class NetworkManager {
         return false;
       }
       Serial.printf("ancs2mqtt: connecting to MQTT server %s:%s ", mqttHostValue, mqttPortValue);
-      if (! connectMqttOptions()) {
+      if (! mqttConnectOptions()) {
         Serial.println("...failed!");
         lastAttempt = now;
         return false;
       }
       Serial.println("...connected!");
-      announce();
 
+      // Announce ourselves to the broker.
+      mqttAnnounce();
+
+      // Call the start callback (if any).
       if (firstTime) {
         firstTime = false;
         if (onStartedCallback != nullptr) {
@@ -199,8 +209,13 @@ class NetworkManager {
       return true;
     }
 
-    bool connectMqttOptions() {
+    bool mqttConnectOptions() {
       mqttClient.setHost(mqttHostValue, String(mqttPortValue).toInt());
+
+      // Set Last Will and Testament topic
+      String lwtTopic = bridgeTopic("LWT");
+      mqttClient.setWill(lwtTopic.c_str(), "Offline", true, 0);
+
       if (mqttUserPasswordValue[0] != '\0') {
         return mqttClient.connect(iotWebConf->getThingName(), mqttUserNameValue, mqttUserPasswordValue);
       } else if (mqttUserNameValue[0] != '\0') {
@@ -211,7 +226,7 @@ class NetworkManager {
     }
 
     // Announce ourselves.
-    void announce() {
+    void mqttAnnounce() {
       DynamicJsonDocument doc(255);
       iotwebconf::WifiAuthInfo authInfo = iotWebConf->getWifiAuthInfo();
 
@@ -219,11 +234,13 @@ class NetworkManager {
       doc["name"]         = name;
       doc["ssid"]         = authInfo.ssid;
       doc["ip"]           = localIP();
-      doc["device-topic"] = constructTopic("+");
+      doc["device-topic"] = deviceTopic("+");
 
       String payload;
       serializeJson(doc, payload);
-      mqttClient.publish(topicPrefix + "/bridge/info", payload);
+
+      mqttClient.publish(bridgeTopic("LWT").c_str(), "Online", true, 0);
+      mqttClient.publish(bridgeTopic("info").c_str(), payload);
     }
 
     String localIP() {

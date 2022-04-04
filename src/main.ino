@@ -34,18 +34,14 @@ void onNotificationArrived(const ArduinoNotification* notification, const Notifi
   String payload;
   serializeJson(doc, payload);
 
-  Serial.print("ancs2mqtt: received notification ");
-  Serial.println(payload);
+  Serial.println("ancs2mqtt: received notification.");
 
   nwManager.publish(notification->type, payload);
 }
 
 // A notification was cleared
 void onNotificationRemoved(const ArduinoNotification* notification, const Notification* rawNotificationData) {
-  Serial.print("ancs2mqtt: removed notification ");
-  Serial.println(notification->title);
-  Serial.println(notification->message);
-  Serial.println(notification->type);
+  Serial.print("ancs2mqtt: removed notification.");
 }
 
 void setup() {
