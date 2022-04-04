@@ -1,37 +1,58 @@
 #pragma once
 #include <Arduino.h>
 #include <MQTT.h>
+#include <EEPROM.h>
+#include "defaults.h"
+#include <ArduinoJson.h>
 #include <IotWebConf.h>
 #include <IotWebConfUsing.h> // This loads aliases for easier class names.
 #include <string>
 #include <functional>
 #include "esp32notifications.h"
-#include "defaults.h"
 
 DNSServer   dnsServer;
 WebServer   httpServer(80);
 WiFiClient  wifiClient;
-MQTTClient  mqttClient;
+MQTTClient  mqttClient(MQTT_BUFFER_SIZE);
 
 class NetworkManager {
   bool    needReset       = false;
   bool    needMqttConnect = false;
 
-  String  name;
-  String  topicPrefix;
+  const char*  name;
+  String       topicPrefix = "ancs2mqtt";
 
   uint8_t statusPin;
-  char    mqttHostValue[PARAMETER_STRING_LENGTH];
-  char    mqttPortValue[PARAMETER_STRING_LENGTH]   = "1883";
-  char    mqttUserNameValue[PARAMETER_STRING_LENGTH];
-  char    mqttUserPasswordValue[PARAMETER_STRING_LENGTH];
+  uint8_t configPin;
+
+  // Parameter configuration.
+  //
+  // NOTE: after making changes to parameters that may affect their storage
+  //       layout in EEPROM (changing length, identifier, order, etc), you
+  //       need to update the CONFIG_VERSION define so WiFiManager will spot
+  //       the changes and reset the stored configuration.
+  //
+  //       Make sure CONFIG_VERSION is (at most) 4 bytes.
+
+#define CONFIG_VERSION    "0100"
+#define TEXT_PARAM_LENGTH 32
+
+  char    iosDeviceIdentifierValue[TEXT_PARAM_LENGTH];
+  char    mqttHostValue[TEXT_PARAM_LENGTH];
+  char    mqttPortValue[6];
+  char    mqttUserNameValue[TEXT_PARAM_LENGTH];
+  char    mqttUserPasswordValue[TEXT_PARAM_LENGTH];
+  char    resetConfigValue[9];
 
   IotWebConf*                 iotWebConf;
-  IotWebConfParameterGroup    mqttGroup             = IotWebConfParameterGroup("mqtt", "MQTT configuration");
-  IotWebConfTextParameter     mqttHostParam         = IotWebConfTextParameter("MQTT host",         "mqttHost", mqttHostValue,         PARAMETER_STRING_LENGTH);
-  IotWebConfTextParameter     mqttPortParam         = IotWebConfTextParameter("MQTT port",         "mqttPort", mqttPortValue,         PARAMETER_STRING_LENGTH);
-  IotWebConfTextParameter     mqttUserNameParam     = IotWebConfTextParameter("MQTT user",         "mqttUser", mqttUserNameValue,     PARAMETER_STRING_LENGTH);
-  IotWebConfPasswordParameter mqttUserPasswordParam = IotWebConfPasswordParameter("MQTT password", "mqttPass", mqttUserPasswordValue, PARAMETER_STRING_LENGTH);
+  IotWebConfParameterGroup    mqttGroup                = IotWebConfParameterGroup("mqtt", "MQTT configuration");
+  IotWebConfTextParameter     iosDeviceIdentifierParam = IotWebConfTextParameter("iOS device identifier", "iosd",   iosDeviceIdentifierValue, TEXT_PARAM_LENGTH, nullptr, "Identifier for your iOS device");
+  IotWebConfTextParameter     mqttHostParam            = IotWebConfTextParameter("MQTT host",             "mqth",   mqttHostValue,            TEXT_PARAM_LENGTH, nullptr, "MQTT hostname or IP address");
+  IotWebConfTextParameter     mqttPortParam            = IotWebConfTextParameter("MQTT port",             "mqtp",   mqttPortValue,            6,                 "1883",  "MQTT port (typically 1883)");
+  IotWebConfTextParameter     mqttUserNameParam        = IotWebConfTextParameter("MQTT user",             "mqtu",   mqttUserNameValue,        TEXT_PARAM_LENGTH, nullptr, "MQTT username (optional)");
+  IotWebConfPasswordParameter mqttUserPasswordParam    = IotWebConfPasswordParameter("MQTT password",     "mqtP",   mqttUserPasswordValue,    TEXT_PARAM_LENGTH, nullptr, "MQTT password (optional)");
+  IotWebConfParameterGroup    resetGroup               = IotWebConfParameterGroup("reset", "Reset configuration");
+  IotWebConfCheckboxParameter resetConfigParam         = IotWebConfCheckboxParameter("Reset configuration", "rset", resetConfigValue,         9,                 false);
 
   void wifiConnected();
   void configSaved();
@@ -39,9 +60,8 @@ class NetworkManager {
   void handleRoot();
 
   public:
-    NetworkManager(String name, const char* initialApPassword, uint8_t statusPin) : name(name), statusPin(statusPin) {
-      iotWebConf = new IotWebConf(name.c_str(), &dnsServer, &httpServer, initialApPassword, CONFIG_VERSION);
-      topicPrefix = "ancs2mqtt/";
+    NetworkManager(const char* name, const char* initialApPassword, uint8_t statusPin = LED_BUILTIN, uint8_t configPin = D2) : name(name), statusPin(statusPin), configPin(configPin) {
+      iotWebConf = new IotWebConf(name, &dnsServer, &httpServer, initialApPassword, CONFIG_VERSION);
     }
 
     void setTopicPrefix(String prefix) {
@@ -50,15 +70,19 @@ class NetworkManager {
 
     void start() {
       // Add parameters to group, and group to config.
+      mqttGroup.addItem(&iosDeviceIdentifierParam);
       mqttGroup.addItem(&mqttHostParam);
       mqttGroup.addItem(&mqttPortParam);
       mqttGroup.addItem(&mqttUserNameParam);
       mqttGroup.addItem(&mqttUserPasswordParam);
       iotWebConf->addParameterGroup(&mqttGroup);
 
+      resetGroup.addItem(&resetConfigParam);
+      iotWebConf->addParameterGroup(&resetGroup);
+
       // Status indicator pin
       iotWebConf->setStatusPin(statusPin);
-      //iotWebConf.setConfigPin(CONFIG_PIN);
+      // iotWebConf->setConfigPin(configPin);
 
       // Set callbacks
       using namespace std::placeholders;
@@ -69,35 +93,55 @@ class NetworkManager {
       // Initialize the configuration.
       bool validConfig = iotWebConf->init();
       if (! validConfig) {
-        mqttHostValue[0]         = '\0';
-        strcpy(mqttPortValue, "1883");
-        mqttUserNameValue[0]     = '\0';
-        mqttUserPasswordValue[0] = '\0';
+        /*
+        mqttHostValue[0]            = '\0';
+        mqttPortValue[0]            = '\0';
+        mqttUserNameValue[0]        = '\0';
+        mqttUserPasswordValue[0]    = '\0';
+        iosDeviceIdentifierValue[0] = '\0';
+        resetConfigValue[0]         = '\0';
+        */
+      } else {
+        if (String(resetConfigValue).equals("selected")) {
+          Serial.println("Clearing EEPROM and starting over.");
+          clearEEPROM();
+          return;
+        }
       }
 
+      // Set shorter AP timeout.
+      iotWebConf->setApTimeoutMs(5000);
+
       // Set up URL handlers.
-      httpServer.on("/", std::bind(&NetworkManager::handleRoot, this));
-      httpServer.on("/config", [this]{ iotWebConf->handleConfig(); });
+      httpServer.on("/",    [this]{ iotWebConf->handleConfig(); });
       httpServer.onNotFound([this](){ iotWebConf->handleNotFound(); });
 
       // Start MQTT client
       mqttClient.begin(wifiClient);
     }
 
+    String constructTopic(const char* topic) {
+      return constructTopic(String(topic));
+    }
+
+    String constructTopic(const String topic) {
+      return topicPrefix + String("/") + String(iosDeviceIdentifierValue) + String("/") + topic;
+    }
+
     bool publish(const char* topic, const char* payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(topicPrefix + topic, payload, retained, qos);
+      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
     }
 
     bool publish(const String topic, const char* payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(topicPrefix + topic, payload, retained, qos);
+      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
     }
 
     bool publish(const char* topic, const String payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(topicPrefix + topic, payload, retained, qos);
+      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
     }
 
     bool publish(const String topic, const String payload, bool retained = false, int qos = 0) {
-      return mqttClient.publish(topicPrefix + topic, payload, retained, qos);
+      return mqttClient.publish(constructTopic(topic), payload, retained, qos);
     }
 
     void loop() {
@@ -110,7 +154,8 @@ class NetworkManager {
         }
       } else if (iotWebConf->getState() == iotwebconf::OnLine && ! mqttClient.connected()) {
         Serial.println("MQTT reconnect");
-        connectMqtt();
+        needMqttConnect = true;
+        //connectMqtt();
       }
 
       if (needReset) {
@@ -125,10 +170,10 @@ class NetworkManager {
       unsigned long   now = millis();
 
       // Only try once per second.
-      if (1000 > now - lastMqttConnectionAttempt) {
+      if (now - lastMqttConnectionAttempt < 1000) {
         return false;
       }
-      Serial.print("Connecting to MQTT server...");
+      Serial.printf("Connecting to MQTT server %s:%s ", mqttHostValue, mqttPortValue);
       if (! connectMqttOptions()) {
         Serial.println("...failed!");
         lastMqttConnectionAttempt = now;
@@ -136,11 +181,7 @@ class NetworkManager {
       }
       Serial.println("...connected!");
 
-      // Announce ourselves.
-      iotwebconf::WifiAuthInfo authInfo = iotWebConf->getWifiAuthInfo();
-      publish("bridge/info/name", name);
-      publish("bridge/info/ssid", authInfo.ssid);
-      publish("bridge/info/ip",   localIP());
+      announce();
 
       return true;
     }
@@ -156,6 +197,22 @@ class NetworkManager {
       }
     }
 
+    // Announce ourselves.
+    void announce() {
+      DynamicJsonDocument doc(255);
+      iotwebconf::WifiAuthInfo authInfo = iotWebConf->getWifiAuthInfo();
+
+      doc["version"]      = CONFIG_VERSION;
+      doc["name"]         = name;
+      doc["ssid"]         = authInfo.ssid;
+      doc["ip"]           = localIP();
+      doc["device-topic"] = constructTopic("+");
+
+      String payload;
+      serializeJson(doc, payload);
+      mqttClient.publish(topicPrefix + "/bridge/info", payload);
+    }
+
     String localIP() {
       IPAddress ipAddress = WiFi.localIP();
       String ipString     = String(ipAddress[0]);
@@ -164,6 +221,19 @@ class NetworkManager {
         ipString += '.' + String(ipAddress[octet]);
       }
       return ipString;
+    }
+
+    void clearEEPROM() {
+      EEPROM.begin(512);
+      for (int i = 0; i < 512; i++) {
+        EEPROM.write(i, 0);
+      }
+      EEPROM.end();
+      ESP.restart();
+    }
+
+    char* getName() {
+      return iotWebConf->getThingName();
     }
 };
 
@@ -178,8 +248,9 @@ void NetworkManager::configSaved() {
 
 bool NetworkManager::formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper) {
   Serial.println("Validating form.");
-  String host = webRequestWrapper->arg(mqttHostParam.getId());
-  String port = webRequestWrapper->arg(mqttPortParam.getId());
+  String host  = webRequestWrapper->arg(mqttHostParam.getId());
+  String port  = webRequestWrapper->arg(mqttPortParam.getId());
+  String ident = webRequestWrapper->arg(iosDeviceIdentifierParam.getId());
 
   if (host.length() < 3) {
     mqttHostParam.errorMessage = "Please provide at least 3 characters.";
@@ -191,25 +262,10 @@ bool NetworkManager::formValidator(iotwebconf::WebRequestWrapper* webRequestWrap
     return false;
   }
 
-  return true;
-}
-
-
-void NetworkManager::handleRoot() {
-  if (iotWebConf->handleCaptivePortal()) {
-    // Captive portal request were already served.
-    return;
+  if (ident.length() < 1 || ident.indexOf("/") != -1) {
+    iosDeviceIdentifierParam.errorMessage = "Please provide at least one character, and no slashes ('/').";
+    return false;
   }
-  String s = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/>";
-  s += "<title>ancs2mqtt</title><style>body { font-family: Helvetica, sans-serif; font-size: 14px }</style></head><body><h1>ancs2mqtt</h1>";
-  s += "<ul>";
-  s += "<li>MQTT host: ";
-  s += mqttHostValue;
-  s += "<li>MQTT port: ";
-  s += mqttPortValue;
-  s += "</ul>";
-  s += "Go to <a href='config'>configure page</a> to change values.";
-  s += "</body></html>\n";
 
-  httpServer.send(200, "text/html", s);
+  return true;
 }
