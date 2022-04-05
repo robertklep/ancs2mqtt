@@ -111,6 +111,7 @@ class NetworkManager {
         if (String(resetConfigValue).equals("selected")) {
           Serial.println("ancs2mqtt: clearing EEPROM and starting over.");
           clearEEPROM();
+          publishForBridge("state", "Disconnected", true);
           ESP.restart();
           return;
         }
@@ -159,6 +160,14 @@ class NetworkManager {
       return mqttClient.publish(deviceTopic(topic), payload, retained, qos);
     }
 
+    bool publishForDevice(const char* topic, const char* payload, bool retained = false, int qos = 0) {
+      return mqttClient.publish(deviceTopic(topic), payload, retained, qos);
+    }
+
+    bool publishForBridge(const char* topic, const char* payload, bool retained = false, int qos = 0) {
+      return mqttClient.publish(bridgeTopic(topic), payload, retained, qos);
+    }
+
     void loop() {
       iotWebConf->doLoop();
       mqttClient.loop();
@@ -175,6 +184,7 @@ class NetworkManager {
       if (needReset) {
         Serial.println("ancs2mqtt: rebooting after 1 second.");
         iotWebConf->delay(1000);
+        publishForBridge("state", "Disconnected", true);
         ESP.restart();
       }
     }
@@ -240,8 +250,8 @@ class NetworkManager {
       String payload;
       serializeJson(doc, payload);
 
-      mqttClient.publish(bridgeTopic("LWT").c_str(), "Online", true, 0);
-      mqttClient.publish(bridgeTopic("info").c_str(), payload);
+      publishForBridge("LWT", "Online", true, 0);
+      publishForBridge("info", payload.c_str());
     }
 
     String localIP() {
