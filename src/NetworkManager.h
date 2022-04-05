@@ -111,6 +111,7 @@ class NetworkManager {
         if (String(resetConfigValue).equals("selected")) {
           Serial.println("ancs2mqtt: clearing EEPROM and starting over.");
           clearEEPROM();
+          ESP.restart();
           return;
         }
       }
@@ -259,7 +260,6 @@ class NetworkManager {
         EEPROM.write(i, 0);
       }
       EEPROM.end();
-      ESP.restart();
     }
 
     char* getName() {

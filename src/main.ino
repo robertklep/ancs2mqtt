@@ -19,7 +19,9 @@ void onBLEStateChanged(BLENotifications::State state) {
 
     case BLENotifications::StateDisconnected:
       Serial.println("ancs2mqtt: stateDisconnected - disconnected from a phone or tablet");
-      notifications.startAdvertising();
+      //notifications.startAdvertising();
+      // XXX: https://github.com/Smartphone-Companions/ESP32-ANCS-Notifications/issues/11
+      ESP.restart();
       break;
   }
 }
