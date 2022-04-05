@@ -85,3 +85,7 @@ The following MQTT topics are used to publish data to. Data will be in JSON form
 
 * `ancs2mqtt/bridge/info`: published once it has connected successfully to WiFi and MQTT.
 * `ancs2mqtt/IOS_DEVICE_NAME/APP_IDENTIFIER`: published when a new notification is received (`IOS_DEVICE_NAME` is the configured _"iOS device identifier"_, `APP_IDENTIFIER` is the iOS app identifier for the app that is responsible for the notification).
+
+## Oh no I forgot my AP password!
+
+If you temporarily connect the GPIO2/D2 pin to GND and then reset, the ESP32 will start up in AP mode using the default AP password (`ancs2mqtt`).

@@ -116,8 +116,8 @@ class NetworkManager {
         }
       }
 
-      // Set shorter AP timeout.
-      iotWebConf->setApTimeoutMs(5000);
+      // Set very short AP timeout (basically skip it).
+      iotWebConf->setApTimeoutMs(1);
 
       // Set up URL handlers.
       httpServer.on("/",    [this]{ iotWebConf->handleConfig(); });
