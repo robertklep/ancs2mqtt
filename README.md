@@ -23,12 +23,16 @@ Heads up: this isn't a plug-and-play project. You should be comfortable working 
 
 I don't use the PlatformIO IDE so the following steps use the PlatformIO CLI tool (`platformio/pio`).
 
-* Obtain the project source code, either by downloading a ZIP file from Github or by cloning the repository.
-* Build the code:
+* Obtain the project source code, either by downloading a ZIP file from Github or by cloning the repository:
+  ```
+  $ git clone https://github.com/robertklep/ancs2mqtt
+  ```
+* (Edit the `platformio.ini` file if you're using a different board)
+* Build the code (in the directory containing the `platformio.ini` file):
   ```
   $ pio run
   ```
-* If that worked: great! If not, and you're certain it's my fault, [create an issue]().
+* If that worked: great! If not, and you're certain it's my fault, [create an issue](https://github.com/robertklep/ancs2mqtt/issues).
 * If you have a successful build, upload it to your ESP32 device:
   ```
   $ pio run --target=upload
